@@ -47,18 +47,8 @@ SHELL ["conda", "run", "-n", "abodybuilder3", "/bin/bash", "-c"]
 # Copy project files
 COPY pyproject.toml setup.py setup.cfg /app/
 COPY src/ /app/src/
-COPY run_abb3.py /app/run_abb3.py
 
 # Install the package in development mode
 WORKDIR /app
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0
 RUN conda run -n abodybuilder3 pip install -e ".[dev]" --constraint /tmp/pinned-versions.txt
-
-# Make the script executable
-RUN chmod +x /app/run_abb3.py
-
-# Set working directory
-WORKDIR /app
-
-# Default command shows usage
-CMD ["conda", "run", "-n", "abodybuilder3", "python", "run_abb3.py", "--help"]
