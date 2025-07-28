@@ -28,20 +28,18 @@ def atom14_to_atom37(position: np.ndarray, sample_unshaped: dict) -> np.ndarray:
     return openfold_atom14_to_atom37(position, batch)
 
 
-def compute_plddt(plddt: torch.Tensor) -> torch.Tensor:
-    """Computes plddt from the model output. The output is a histogram of unnormalised
-    plddt.
-
-    Args:
-        plddt (torch.Tensor): (B, n, 50) output from the model
-
-    Returns:
-        torch.Tensor: (B, n) plddt scores
-    """
-    pdf = torch.nn.functional.softmax(plddt, dim=-1)
-    vbins = torch.arange(1, 101, 2).to(plddt.device).float()
-    output = pdf @ vbins  # (B, n)
-    return output
+def compute_plddt(plddt_logits):
+    """Computes pLDDT from logits."""
+    num_bins = plddt_logits.shape[-1]
+    bin_width = 1.0 / num_bins
+    bounds = np.arange(num_bins + 1) * bin_width
+    bounds = bounds.astype(np.float32)
+    bounds = torch.from_numpy(bounds)
+    bounds = bounds.to(plddt_logits.device)
+    bin_centers = (bounds[:-1] + bounds[1:]) / 2.0
+    bin_centers = bin_centers[None, None, :]
+    plddt = torch.sum(plddt_logits * bin_centers, dim=-1)
+    return plddt
 
 
 def main(
@@ -53,19 +51,37 @@ def main(
     for folder in ["true", "pred", "plddt", "pred_unfixed"]:
         (output_dir / folder).mkdir(exist_ok=True, parents=True)
 
+    use_plm_embeddings = "language" in model
     data = ABB3DataModule(
         data_dir="data/",
         legacy=False,
         batch_size=1,
         edge_chain_feature=True,
-        use_plm_embeddings="language" in model,
+        use_plm_embeddings=use_plm_embeddings,
     )
     data.setup(None)
 
     # inference
     ckpt = output_dir / "best_second_stage.ckpt"
-    logger.info(f"Loading from {ckpt=}")
+    logger.info(f"Loading from {ckpt}")
     model = LitABB3.load_from_checkpoint(ckpt)
+    
+    # Check if the loaded model configuration matches what we expect for language model embeddings
+    if use_plm_embeddings:
+        # For language model embeddings, the input dimension should be 1024
+        if model.model_config.c_s != 1024:
+            logger.warning(f"Model checkpoint has c_s={model.model_config.c_s}, but language model embeddings require c_s=1024")
+            logger.warning("This may cause dimension mismatch errors. Please ensure you're using the correct checkpoint.")
+        else:
+            logger.info("Model configuration matches language model embedding requirements (c_s=1024)")
+    else:
+        # For regular embeddings, the input dimension should be 23
+        if model.model_config.c_s != 23:
+            logger.warning(f"Model checkpoint has c_s={model.model_config.c_s}, but regular embeddings require c_s=23")
+            logger.warning("This may cause dimension mismatch errors. Please ensure you're using the correct checkpoint.")
+        else:
+            logger.info("Model configuration matches regular embedding requirements (c_s=23)")
+    
     model.model.eval()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cpu":
@@ -152,8 +168,8 @@ def main(
             logger.info(f"pred {identifier} fail")
             predictions_failed += 1
 
-    logger.info(f"{predictions_failed=}")
+    logger.info(f"predictions_failed: {predictions_failed}")
 
 
 if __name__ == "__main__":
-    typer.run(main)
+    main()
