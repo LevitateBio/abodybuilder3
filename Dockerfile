@@ -1,18 +1,26 @@
-# Use Python base image and install CUDA support
-FROM python:3.9-slim
+# Use CUDA base image for GPU support
+FROM nvidia/cuda:12.1.1-base-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV CONDA_AUTO_UPDATE_CONDA=false
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 
-# Install system dependencies including CUDA support
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
     git \
     build-essential \
     ca-certificates \
+    python3 \
+    python3-pip \
+    gcc \
+    g++ \
+    make \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Miniconda
@@ -27,6 +35,7 @@ ENV PATH="/opt/conda/bin:$PATH"
 RUN conda config --set channel_priority flexible && \
     conda config --add channels conda-forge && \
     conda config --add channels pytorch && \
+    conda config --add channels nvidia && \
     conda config --add channels bioconda
 
 # Accept Terms of Service for default channels
@@ -38,8 +47,8 @@ COPY environment_gpu.yml /tmp/environment_gpu.yml
 COPY environment_cpu.yml /tmp/environment_cpu.yml
 COPY pinned-versions.txt /tmp/pinned-versions.txt
 
-# Create conda environment (using CPU environment by default)
-RUN conda env create -f /tmp/environment_cpu.yml --name abodybuilder3 --yes
+# Create conda environment (using GPU environment)
+RUN conda env create -f /tmp/environment_gpu.yml --name abodybuilder3 --yes
 
 # Activate conda environment
 SHELL ["conda", "run", "-n", "abodybuilder3", "/bin/bash", "-c"]
@@ -52,3 +61,9 @@ COPY src/ /app/src/
 WORKDIR /app
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0
 RUN conda run -n abodybuilder3 pip install -e ".[dev]" --constraint /tmp/pinned-versions.txt
+
+# Fix transformers/huggingface-hub compatibility issue
+RUN conda run -n abodybuilder3 pip install --upgrade huggingface-hub>=0.21.0
+
+# Set the default command to activate the conda environment
+CMD ["conda", "run", "-n", "abodybuilder3", "/bin/bash"]
